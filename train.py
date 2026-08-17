@@ -66,6 +66,7 @@ class Trainer:
         self.num_reconstruct_samples = self.cfg.training.num_reconstruct_samples
         self.total_epochs = self.cfg.training.epochs
         self.epoch = 0
+        self.best_val_loss = float("inf")
 
         assert cfg.training.batch_size % self.accelerator.num_processes == 0, (
             "Batch size must be divisible by the number of processes. "
@@ -199,8 +200,24 @@ class Trainer:
         model_epoch = self.epoch
         return ckpt_path, model_name, model_epoch
 
+    def save_best_ckpt(self):
+        self.accelerator.wait_for_everyone()
+        if self.accelerator.is_main_process:
+            if not os.path.exists("checkpoints"):
+                os.makedirs("checkpoints")
+            ckpt = {}
+            for k in self._keys_to_save:
+                if hasattr(self.__dict__[k], "module"):
+                    ckpt[k] = self.accelerator.unwrap_model(self.__dict__[k])
+                else:
+                    ckpt[k] = self.__dict__[k]
+            torch.save(ckpt, "checkpoints/model_best.pth")
+            log.info(
+                f"Saved best model (val_loss={self.best_val_loss:.4f}) to {os.getcwd()}"
+            )
+
     def load_ckpt(self, filename="model_latest.pth"):
-        ckpt = torch.load(filename, map_location=self.device)  # Explicit device placement.
+        ckpt = torch.load(filename, map_location=self.device, weights_only=False)  # Explicit device placement.
         for k, v in ckpt.items():
             self.__dict__[k] = v
         not_in_ckpt = set(self._keys_to_save) - set(ckpt.keys())
@@ -208,11 +225,11 @@ class Trainer:
             log.warning("Keys not found in ckpt: %s", not_in_ckpt)
 
     def init_models(self):
-        model_ckpt = Path(self.cfg.saved_folder) / "checkpoints" / "model_latest.pth"
-        log.info("model_ckpt: %s", model_ckpt)
-        if model_ckpt.exists():
-            self.load_ckpt(model_ckpt)
-            log.info(f"Resuming from epoch {self.epoch}, step {self.global_step}: {model_ckpt}")
+        if self.cfg.resume_folder is not None:
+            model_ckpt = Path(self.cfg.resume_folder) / "checkpoints" / "model_latest.pth"
+            if model_ckpt.exists():
+                self.load_ckpt(model_ckpt)
+                log.info(f"Resuming from epoch {self.epoch}: {model_ckpt}")
 
         # initialize encoder
         if self.encoder is None:
@@ -360,7 +377,10 @@ class Trainer:
             self.train()
             self.accelerator.wait_for_everyone()
             self.val()
-            self.logs_flash(step=self.epoch)
+            epoch_log = self.logs_flash(step=self.epoch)
+            if self.cfg.training.save_best and epoch_log["val_loss"] < self.best_val_loss:
+                self.best_val_loss = epoch_log["val_loss"]
+                self.save_best_ckpt()
             if (self.cfg.training.save_every_x_epoch is not None and self.epoch % self.cfg.training.save_every_x_epoch == 0):
                 self.save_ckpt()
 
@@ -704,6 +724,7 @@ class Trainer:
         if self.accelerator.is_main_process:
             self.wandb_run.log(epoch_log)
         self.epoch_log = OrderedDict()
+        return epoch_log
 
     def plot_samples(
         self,
