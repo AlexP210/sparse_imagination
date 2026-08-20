@@ -1,14 +1,15 @@
 defaults:
   - _self_
-  - env: point_maze
-  - encoder: dinov1
+  - env: ???
+  - encoder: dinov3
   - action_encoder: proprio
   - proprio_encoder: proprio
   - decoder: vqvae
   - predictor: vit_nope
 
 # Checkpoints are saved to ${ckpt_base_path}/outputs/<hydra-run-dir>.
-ckpt_base_path: ${oc.env:DINO_WM_RUN_DIR,./runs}
+ckpt_base_path: ???
+resume_folder: null
 
 hydra:
   run:
@@ -20,8 +21,9 @@ hydra:
 training:
   seed: 0
   epochs: 100
-  batch_size: 32
-  save_every_x_epoch: 10
+  batch_size: 40
+  save_every_x_epoch: 1
+  save_best: True
   save_every_x_steps: null
   reconstruct_every_x_batch: 500
   num_reconstruct_samples: 6
@@ -58,3 +60,6 @@ debug: false
 
 # Random baseline default. Use drop_rate_ub=null for Full/CLS training.
 drop_rate_ub: 0.5
+
+# Config variables to run inside TSD environment
+data_dir: ???
