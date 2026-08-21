@@ -164,14 +164,27 @@ class VWorldModel(nn.Module):
         if self._predictor_base_mask is not None:
             _set_predictor_bias(self.predictor, self._predictor_base_mask)
 
-    def encode_obs(self, obs):
+    def encode_visual(self, obs):
+        """Patch embeddings for `obs`, from precomputed features when the dataset carries them.
+
+        `dino_patch_features` is what tools/preprocess_data.py --dino writes into a recording and
+        what the ManiSkill loaders hand through: the same frozen backbone over the same frames,
+        computed once offline instead of once per batch. Nothing downstream can tell the
+        difference, so this is purely a speed path, and it is skipped automatically for a dataset
+        that carries no features. It does assume the features were computed at the resolution and
+        patch size this encoder would use, which is what --camera and the encoder config settle.
+        """
+        if "dino_patch_features" in obs:
+            return obs["dino_patch_features"]
         visual = obs["visual"]
         b = visual.shape[0]
         visual = rearrange(visual, "b t ... -> (b t) ...")
         visual = self.encoder_transform(visual)
         visual_embs = self.encoder(visual)
-        visual_embs = rearrange(visual_embs, "(b t) p d -> b t p d", b=b)
+        return rearrange(visual_embs, "(b t) p d -> b t p d", b=b)
 
+    def encode_obs(self, obs):
+        visual_embs = self.encode_visual(obs)
         proprio_emb = self.encode_proprio(obs["proprio"])
         return {"visual": visual_embs, "proprio": proprio_emb}
 
@@ -455,12 +468,9 @@ class VWorldModelDrop(VWorldModel):
         )
 
     def encode_obs(self, obs, eval_idx=None):
-        visual = obs["visual"]
-        b = visual.shape[0]
-        visual = rearrange(visual, "b t ... -> (b t) ...")
-        visual = self.encoder_transform(visual)
-        z = self.encoder(visual)
-        z = rearrange(z, "(b t) n d -> b t n d", b=b)
+        # precomputed features, where available, feed the patch drop exactly as freshly encoded
+        # ones do -- the subset is chosen after encoding either way
+        z = self.encode_visual(obs)
 
         keep_idx = self.keep_patches_idx.to(z.device)
         z = z[:, :, keep_idx, :]
