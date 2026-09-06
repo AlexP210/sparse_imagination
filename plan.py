@@ -283,7 +283,10 @@ class PlanWorkspace:
 
 def load_ckpt(snapshot_path, device):
     with snapshot_path.open("rb") as f:
-        payload = torch.load(f, map_location=device)
+        # weights_only=False: the checkpoint pickles whole modules (ViTPredictor, the
+        # encoder, ...) rather than state dicts, which torch >= 2.6 refuses to unpickle
+        # under the new weights_only=True default.
+        payload = torch.load(f, map_location=device, weights_only=False)
     loaded_keys = []
     result = {}
     for k, v in payload.items():
